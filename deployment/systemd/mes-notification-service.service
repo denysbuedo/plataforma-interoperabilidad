@@ -1,0 +1,23 @@
+[Unit]
+Description=MES Notification Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mes-notifications
+Group=mes-notifications
+WorkingDirectory=/opt/mes/platform
+EnvironmentFile=/etc/mes/notification-service.env
+ExecStart=/opt/mes/platform/.venv/bin/uvicorn mes_notification_service.main:app --host [IP_INTERNA] --port 8004 --workers 2 --no-access-log
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mes/notification-service
+
+[Install]
+WantedBy=multi-user.target

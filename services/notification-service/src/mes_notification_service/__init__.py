@@ -1,0 +1,1 @@
+"""Institutional notification service."""

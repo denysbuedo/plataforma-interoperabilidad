@@ -1,0 +1,1 @@
+"""Institution domain service process."""

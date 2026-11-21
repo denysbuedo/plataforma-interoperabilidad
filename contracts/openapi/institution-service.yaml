@@ -1,0 +1,7 @@
+openapi: 3.1.0
+info:
+  title: MES Institution Service
+  version: 0.1.0
+  description: Bootstrap contract; the domain contract requires functional approval.
+paths: {}
+

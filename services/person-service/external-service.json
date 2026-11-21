@@ -1,0 +1,27 @@
+{
+  "service_id": "person-service",
+  "implementation": "registro-personas",
+  "contract_version": "0.1.0",
+  "contract_status": "DRAFT",
+  "contract_path": "contracts/openapi/person-service.yaml",
+  "contract_sha256": "c5c60f485c3412f470ecc868e9d83b3c5a5e0b24daa8141a806c70eb61cac79b",
+  "source_contract_path": "docs/openapi.yaml",
+  "python_version": "3.12",
+  "module": "registro_personas",
+  "development_host": "127.0.0.1",
+  "development_port": 8013,
+  "liveness_path": "/health/live",
+  "readiness_path": "/health/ready",
+  "private_api_activation": "PLATFORM_SIGNED_DELEGATION_RS256",
+  "private_paths": [
+    "/v1/personas",
+    "/v1/personas/{person_id}",
+    "/v1/personas/{person_id}/referencias",
+    "/v1/referencias/resolver",
+    "/v1/revisiones",
+    "/v1/personas/{person_id}/cuentas"
+  ],
+  "gateway_route_configured": false,
+  "events_implemented": false,
+  "provisioning_implemented": false
+}

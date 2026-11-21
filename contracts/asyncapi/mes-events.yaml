@@ -1,0 +1,46 @@
+asyncapi: 3.0.0
+info:
+  title: MES Institutional Events
+  version: 0.1.0
+  description: Event names reserved for later milestones; no producer exists yet.
+channels:
+  institutionCreated:
+    address: institution.created
+    messages:
+      institutionCreated:
+        $ref: '#/components/messages/InstitutionCreated'
+  institutionUpdated:
+    address: institution.updated
+    messages:
+      institutionUpdated:
+        $ref: '#/components/messages/InstitutionUpdated'
+  personCreated:
+    address: person.created
+    messages:
+      personCreated:
+        $ref: '#/components/messages/PersonCreated'
+  personUpdated:
+    address: person.updated
+    messages:
+      personUpdated:
+        $ref: '#/components/messages/PersonUpdated'
+operations: {}
+components:
+  messages:
+    InstitutionCreated:
+      name: institution.created
+      payload:
+        $ref: ../schemas/event-envelope.json
+    InstitutionUpdated:
+      name: institution.updated
+      payload:
+        $ref: ../schemas/event-envelope.json
+    PersonCreated:
+      name: person.created
+      payload:
+        $ref: ../schemas/event-envelope.json
+    PersonUpdated:
+      name: person.updated
+      payload:
+        $ref: ../schemas/event-envelope.json
+

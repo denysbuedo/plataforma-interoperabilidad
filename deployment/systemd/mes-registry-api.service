@@ -1,0 +1,23 @@
+[Unit]
+Description=MES Registry API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mes-registry
+Group=mes-registry
+WorkingDirectory=/opt/mes/platform
+EnvironmentFile=/etc/mes/registry-api.env
+ExecStart=/opt/mes/platform/.venv/bin/uvicorn mes_registry_api.main:app --host [IP_INTERNA] --port 8001 --workers 2 --no-access-log
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mes/registry-api
+
+[Install]
+WantedBy=multi-user.target

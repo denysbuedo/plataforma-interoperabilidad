@@ -1,0 +1,23 @@
+[Unit]
+Description=MES Person Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mes-persons
+Group=mes-persons
+WorkingDirectory=/opt/mes/platform
+EnvironmentFile=/etc/mes/person-service.env
+ExecStart=/opt/mes/platform/.venv/bin/uvicorn mes_person_service.main:app --host [IP_INTERNA] --port 8003 --workers 2 --no-access-log
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mes/person-service
+
+[Install]
+WantedBy=multi-user.target
