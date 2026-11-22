@@ -16,8 +16,9 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import httpx
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
+from fastapi.security import OAuth2AuthorizationCodeBearer
 from mes_common.problem import ProblemDetails
-from mes_common.security import Principal, authenticated_principal, oauth2_scheme
+from mes_common.security import Principal, decode_access_token
 from mes_common.settings import get_settings
 from pydantic import (
     BaseModel,
@@ -33,6 +34,12 @@ from mes_person_service.delegation import _signing_config, issue_delegation
 
 router = APIRouter()
 _settings = get_settings("person-service")
+_persons_docs_issuer = (_settings.persons_oidc_issuer_url or _settings.oidc_issuer_url).rstrip("/")
+persons_oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    authorizationUrl=f"{_persons_docs_issuer}/protocol/openid-connect/auth",
+    tokenUrl=f"{_persons_docs_issuer}/protocol/openid-connect/token",
+    scopes={"openid": "Authenticate the operator"},
+)
 _security_logger = logging.getLogger("mes.persons.security")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -204,8 +211,7 @@ def _persons_oidc_config() -> tuple[str, str, str]:
     except ValueError:
         issuer_port_valid = False
     if (
-        issuer.rstrip("/") != _settings.oidc_issuer_url.rstrip("/")
-        or issuer_parts.scheme != "https"
+        issuer_parts.scheme != "https"
         or not issuer_parts.hostname
         or not _SAFE_HOST.fullmatch(issuer_parts.hostname)
         or "*" in issuer
@@ -231,10 +237,15 @@ def _persons_oidc_config() -> tuple[str, str, str]:
 
 
 async def persons_operator_principal(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str, Depends(persons_oauth2_scheme)],
 ) -> Principal:
-    _persons_oidc_config()
-    principal = await authenticated_principal(token)
+    issuer, client_id, _callback = _persons_oidc_config()
+    principal = decode_access_token(
+        token,
+        issuer=issuer,
+        audience=_settings.oidc_audience,
+        authorized_party=client_id,
+    )
     return authorize_operator(principal)
 
 
@@ -582,7 +593,7 @@ function b64(bytes){return btoa(String.fromCharCode(...new Uint8Array(bytes))).r
 async function discovery(){const d=await fetch(issuer+'/.well-known/openid-configuration',{cache:'no-store'}).then(r=>r.json()),base=new URL(issuer);if(d.issuer!==issuer)throw Error('Emisor OIDC no válido');for(const endpoint of [d.authorization_endpoint,d.token_endpoint,d.jwks_uri]){const u=new URL(endpoint);if(u.protocol!=='https:'||u.origin!==base.origin||!u.pathname.startsWith(base.pathname+'/'))throw Error('Configuración OIDC no válida')}return d}
 async function login(){const verifier=b64(crypto.getRandomValues(new Uint8Array(32))),challenge=b64(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))),state=b64(crypto.getRandomValues(new Uint8Array(24))),nonce=b64(crypto.getRandomValues(new Uint8Array(24)));sessionStorage.setItem('pkce',JSON.stringify({verifier,state,nonce}));const d=await discovery();const u=new URL(d.authorization_endpoint);Object.entries({client_id:clientId,redirect_uri:redirect,response_type:'code',scope:'openid',code_challenge:challenge,code_challenge_method:'S256',state,nonce}).forEach(([k,v])=>u.searchParams.set(k,v));location.assign(u)}
 function b64bytes(s){s=s.replace(/-/g,'+').replace(/_/g,'/');return Uint8Array.from(atob(s+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0))}
-async function verifyIdToken(value,pending,d){const parts=value.split('.');if(parts.length!==3)throw Error('Token OIDC inválido');const head=JSON.parse(new TextDecoder().decode(b64bytes(parts[0]))),claims=JSON.parse(new TextDecoder().decode(b64bytes(parts[1])));if(head.alg!=='RS256'||!head.kid)throw Error('Firma OIDC no admitida');const jwks=await fetch(d.jwks_uri).then(r=>r.json()),jwk=jwks.keys.find(k=>k.kid===head.kid&&k.kty==='RSA'&&(!k.use||k.use==='sig'));if(!jwk)throw Error('Clave OIDC no disponible');const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);const valid=await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,b64bytes(parts[2]),new TextEncoder().encode(parts[0]+'.'+parts[1]));const aud=Array.isArray(claims.aud)?claims.aud:[claims.aud],now=Date.now()/1000;if(!valid||claims.iss!==issuer||!aud.includes(clientId)||(aud.length>1&&claims.azp!==clientId)||(claims.azp&&claims.azp!==clientId)||claims.nonce!==pending.nonce||typeof claims.exp!=='number'||!Number.isFinite(claims.exp)||claims.exp<=now||typeof claims.iat!=='number'||!Number.isFinite(claims.iat)||claims.iat>now+60||typeof claims.sub!=='string'||!claims.sub)throw Error('Respuesta de autenticación OIDC inválida');}
+async function verifyIdToken(value,pending,d){const parts=value.split('.');if(parts.length!==3)throw Error('Token OIDC inválido');const head=JSON.parse(new TextDecoder().decode(b64bytes(parts[0]))),claims=JSON.parse(new TextDecoder().decode(b64bytes(parts[1])));if(head.alg!=='RS256'||!head.kid)throw Error('Firma OIDC no admitida');const jwks=await fetch(d.jwks_uri).then(r=>r.json()),jwk=jwks.keys.find(k=>k.kid===head.kid&&k.kty==='RSA'&&(!k.use||k.use==='sig'));if(!jwk)throw Error('Clave OIDC no disponible');const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);const valid=await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,b64bytes(parts[2]),new TextEncoder().encode(parts[0]+'.'+parts[1]));const aud=Array.isArray(claims.aud)?claims.aud:[claims.aud],now=Date.now()/1000;if(!valid||claims.iss!==issuer||!aud.includes(clientId)||claims.azp!==clientId||claims.nonce!==pending.nonce||typeof claims.exp!=='number'||!Number.isFinite(claims.exp)||claims.exp<=now||(claims.nbf!==undefined&&(typeof claims.nbf!=='number'||!Number.isFinite(claims.nbf)||claims.nbf>now))||typeof claims.iat!=='number'||!Number.isFinite(claims.iat)||claims.iat>now+60||typeof claims.sub!=='string'||!claims.sub)throw Error('Respuesta de autenticación OIDC inválida');}
 async function callback(){const q=new URLSearchParams(location.search),code=q.get('code');if(q.has('error')){history.replaceState({},'',location.pathname);status('El proveedor no completó el inicio de sesión.');return}if(!code)return;const pending=JSON.parse(sessionStorage.getItem('pkce')||'null');sessionStorage.removeItem('pkce');history.replaceState({},'',location.pathname);if(!pending||q.get('state')!==pending.state)throw Error('Respuesta de autenticación inválida');const d=await discovery(),body=new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:redirect,code_verifier:pending.verifier});const result=await fetch(d.token_endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.json());if(!result.access_token||!result.id_token)throw Error('No se pudo completar el inicio de sesión');await verifyIdToken(result.id_token,pending,d);token=result.access_token;$('app').hidden=false;$('login').hidden=true;$('logout').hidden=false;$('identity').textContent='Sesión institucional activa';status('Identidad validada de nuevo por el backend en cada operación.');}
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...(opts.headers||{})},cache:'no-store'});const data=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401)throw Error('La sesión institucional expiró. Inicia sesión nuevamente.');if(r.status===403)throw Error('No tienes permiso para consultar esta persona o usar la fuente seleccionada.');if(r.status===409)throw Error('Conflicto de referencia. Requiere revisión manual; no se fusionó ningún registro.');throw Error(data.detail||data.title||'Operación denegada ('+r.status+')')}return data}
 function showPerson(p,refs=[]){$('person').hidden=false;$('person').replaceChildren();const title=document.createElement('strong');title.textContent=p.display_name+' · '+p.person_id;$('person').append(title);for(const ref of refs){const row=document.createElement('p');row.textContent=`Origen autorizado: ${ref.source_system||ref.system}/${ref.source_entity_type||ref.entity} · ${ref.source_record_id||ref.external_id}`;$('person').append(row)}const section=document.createElement('section');section.innerHTML='<h3>Vincular otra referencia de origen</h3><form id="link-reference"><label>Sistema<input name="system" required maxlength="64"></label><label>Entidad<input name="entity" required maxlength="64"></label><label>Referencia exacta<input name="external_id" required maxlength="200"></label><label>UUID de evidencia autorizada<input name="evidence_ref" required></label><label>Fecha observada (ISO 8601)<input name="observed_at" type="datetime-local" required></label><button type="button">Vincular referencia</button></form><p id="link-status" role="status"></p>';$('person').append(section);const form=section.querySelector('form'),button=form.querySelector('button');button.onclick=async e=>{e.preventDefault();status('Vinculando referencia…');const f=new FormData(form),source={system:f.get('system'),entity:f.get('entity'),external_id:f.get('external_id')},data={source,provenance:{system:source.system,evidence_ref:f.get('evidence_ref'),observed_at:new Date(f.get('observed_at')).toISOString()}};try{await api('/api/v1/personas/'+encodeURIComponent(p.person_id)+'/referencias',{method:'POST',body:JSON.stringify(data)});const updated=await api('/api/v1/personas/'+encodeURIComponent(p.person_id)+'/referencias');showPerson(p,updated);status('Referencia vinculada y auditada.')}catch(x){section.querySelector('#link-status').textContent=x.message;status(x.message)}};form.onsubmit=e=>{e.preventDefault();button.click()}}

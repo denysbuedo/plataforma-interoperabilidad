@@ -54,21 +54,32 @@ $env:REGISTRY_DELEGATION_PUBLIC_KEY_FILE = 'C:\ruta\local\delegation-public.pem'
 D:\TRABAJO\Desarrollo\registro-personas\.venv\Scripts\python.exe -m registro_personas --port 8013
 ```
 
-El URL local autorizado provisional es `http://127.0.0.1:8003/admin/personas`.
-La plataforma se sirve en el puerto 8003 y procesa en esa misma ruta el callback
-OIDC (`code`/`state`), intercambia el código con PKCE y limpia la query antes de
-mostrar el módulo. El puerto 8003 no corresponde al Registro: este escucha en
-8013. El responsable informa el hostname `persona.reduniv.edu.cu` para la API de
-Personas en `[IP_INTERNA]:8003`; ese puerto es del backend y no forma parte de la
-URL pública. La URL pública es `https://persona.reduniv.edu.cu`. `/ready` responde
-200 y `/` devuelve 404 de la aplicación. Esa evidencia no confirma qué aplicación sirve allí ni que
-`/admin/personas` esté publicada. La callback institucional candidata es
-`https://persona.reduniv.edu.cu/admin/personas`, solo si se confirma que ese host
-sirve la interfaz/proxy de la plataforma en esa ruta. La callback se configura
-explícitamente y no se construye desde `Host` del navegador. HTTP solo se acepta
-para loopback local; el entorno institucional requiere HTTPS y URI exacta. El emisor HTTPS
-de Keycloak sigue pendiente; no iniciar login institucional hasta confirmar la ruta,
-el emisor y la configuración del cliente.
+El URL local provisional es `http://127.0.0.1:8003/admin/personas`. El backend
+sirve allí la página administrativa, pero el flujo OIDC está implementado en
+JavaScript del navegador: descubre el issuer, genera PKCE S256, valida `state` y
+`nonce`, intercambia el código en el token endpoint y elimina la query al regresar.
+Por ello `interoperabilidad-admin` debe ser cliente público; no hay intercambio
+del código desde el servidor ni secreto de cliente en la aplicación. El callback
+implementado es exactamente `/admin/personas`. La ruta dedicada
+`/admin/oidc/callback` no está implementada.
+
+El hostname institucional informado es `persona.reduniv.edu.cu`, por lo que
+`https://persona.reduniv.edu.cu/admin/personas` es la callback propuesta. Despliegue
+debe confirmar que ese host/ruta sirve este módulo de Interoperabilidad antes de
+registrarla. El Web Origin requerido por las llamadas del navegador es el origen
+exacto `https://persona.reduniv.edu.cu`, sin ruta ni comodines. El botón Salir solo
+borra el token en memoria y el estado local del módulo; no invoca el logout de
+Keycloak. No corresponde registrar una post-logout redirect URI para el flujo
+actual.
+
+Identidad informó el issuer
+`https://identidad.reduniv.edu.cu/realms/reduniv-institucional`. La validación
+específica del operador de Personas puede usar ese issuer sin cambiar el issuer
+global con el que Interoperabilidad valida a los demás consumidores. El token
+OIDC debe tener audiencia `mes-api` y `azp` exactamente
+`interoperabilidad-admin`; Interoperabilidad valida firma/JWKS, issuer, audiencia,
+`azp`, vigencia y los claims de tiempo disponibles. Las rutas de Personas no usan
+roles Keycloak para permisos funcionales.
 
 El lanzador comprueba identidad del proyecto, metadata Python 3.12 de su virtualenv
 y coincidencia SHA-256 de los contratos. `--check` solo lee archivos; la prueba HTTP
@@ -132,22 +143,21 @@ ni bases. No envía correo ni prueba credenciales reales.
 
 ## Pendientes y reversión
 
-Para login real falta configurar en Keycloak el cliente institucional
-`interoperabilidad-admin` con Authorization Code + PKCE S256, cuentas LDAP
-existentes, sin client credentials, y callback local exacta
-`http://127.0.0.1:8003/admin/personas`. No se ha modificado Keycloak. Se informó
-`persona.reduniv.edu.cu` como host de API Personas, pero `/ready`=200 y `/`=404 no
-confirman que `/admin/personas` llegue al proxy de la plataforma. Validar con el
-propietario de ese despliegue antes de usar la callback candidata
-`https://persona.reduniv.edu.cu/admin/personas`. Los permisos (`persons.read`, `persons.register`, `persons.review`,
-`persons.link` y `persons.source.<alias>`) provienen de política propia de la
-plataforma ligada a `iss`/`sub`, no de roles OIDC; `api-reader/api-writer` tampoco
-conceden acceso. La política externa se configura con
-`PERSONS_AUTHORIZATION_POLICY_FILE`; sin ella la plataforma deniega. También se
-configura por entorno la clave pública OIDC para la plataforma, clave privada de
-delegación y su clave pública en Registro, además de una base local. La vinculación de cuentas,
-verificación de titularidad y publicación productiva quedan fuera. No habilitar
-Service Accounts/Client Credentials para solventar el flujo operador.
+El cliente de Keycloak aún no está creado ni modificado. Antes de pedirlo, Despliegue
+debe confirmar que la callback institucional llega a este módulo. La configuración
+propuesta es cliente público OIDC, Standard Flow, PKCE S256 obligatorio, sin
+Implicit Flow, Direct Access Grants, Service Accounts ni Client Credentials. El
+scope inicial es `openid`. El issuer específico de Personas se configura mediante
+`PERSONS_OIDC_ISSUER_URL`; el issuer global de los otros servicios no se cambia.
+La audiencia de operador sigue siendo `mes-api`, y el backend de Personas restringe
+además `azp` a `interoperabilidad-admin`. Los permisos (`persons.read`,
+`persons.register`, `persons.review`, `persons.link` y
+`persons.source.<alias>`) provienen de política de Interoperabilidad ligada a
+`iss`/`sub`, no de roles OIDC. La política se configura con
+`PERSONS_AUTHORIZATION_POLICY_FILE`; sin ella la plataforma deniega. La plataforma
+firma una delegación breve para la audiencia `registro-personas`; esa audiencia no
+se registra en Keycloak. La vinculación de cuentas sigue denegada hasta disponer
+de verificación institucional de titularidad.
 
 Rollback local: detener el proceso iniciado por el lanzador; restaurar en una revisión
 coordinada el contrato de bootstrap y el comando de desarrollo si se descarta esta

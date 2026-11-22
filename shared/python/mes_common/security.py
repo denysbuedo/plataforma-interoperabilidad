@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -32,6 +33,12 @@ _pinned_public_key = (
 )
 
 
+@lru_cache(maxsize=8)
+def _jwks_client_for_issuer(issuer: str) -> PyJWKClient:
+    """Create a cached Keycloak JWKS client for a separately configured issuer."""
+    return PyJWKClient(f"{issuer.rstrip('/')}/protocol/openid-connect/certs", cache_keys=True)
+
+
 @dataclass(frozen=True, slots=True)
 class Principal:
     subject: str
@@ -48,20 +55,33 @@ def _unauthorized(detail: str = "Invalid or missing access token") -> HTTPExcept
     )
 
 
-def decode_access_token(token: str) -> Principal:
-    """Validate a Keycloak access token and return its normalized identity."""
+def decode_access_token(
+    token: str,
+    *,
+    issuer: str | None = None,
+    audience: str | None = None,
+    authorized_party: str | None = None,
+) -> Principal:
+    """Validate a Keycloak token, optionally for a separately trusted client issuer."""
+    expected_issuer = (issuer or _issuer).rstrip("/")
+    expected_audience = audience or _settings.oidc_audience
     try:
-        signing_key = (
-            _pinned_public_key
-            if _pinned_public_key is not None
-            else _jwks_client.get_signing_key_from_jwt(token).key
-        )
+        if expected_issuer == _issuer:
+            signing_key = (
+                _pinned_public_key
+                if _pinned_public_key is not None
+                else _jwks_client.get_signing_key_from_jwt(token).key
+            )
+        else:
+            signing_key = (
+                _jwks_client_for_issuer(expected_issuer).get_signing_key_from_jwt(token).key
+            )
         claims: dict[str, Any] = jwt.decode(
             token,
             signing_key,
             algorithms=["RS256"],
-            audience=_settings.oidc_audience,
-            issuer=_issuer,
+            audience=expected_audience,
+            issuer=expected_issuer,
             options={
                 "require": ["exp", "iat", "iss", "sub", "aud"],
                 "verify_signature": True,
@@ -69,6 +89,9 @@ def decode_access_token(token: str) -> Principal:
         )
     except (InvalidTokenError, PyJWKClientError) as exc:
         raise _unauthorized() from exc
+
+    if authorized_party is not None and claims.get("azp") != authorized_party:
+        raise _unauthorized()
 
     realm_access = claims.get("realm_access", {})
     resource_access = claims.get("resource_access", {})

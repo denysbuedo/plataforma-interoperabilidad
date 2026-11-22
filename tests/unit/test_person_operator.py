@@ -70,6 +70,49 @@ def test_admin_page_uses_explicit_local_callback(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "http://127.0.0.1:8003/admin/personas" in response.text
     assert "redirect=location.origin" not in response.text
+    assert "claims.azp!==clientId" in response.text
+    assert "claims.nbf!==undefined" in response.text
+
+
+def test_persons_operator_uses_dedicated_issuer_and_client(monkeypatch, tmp_path):
+    _configure_delegation(monkeypatch, tmp_path)
+    issuer = "https://identidad.reduniv.edu.cu/realms/reduniv-institucional"
+    client_id = "interoperabilidad-admin"
+    operator._settings.oidc_issuer_url = "https://identidad.reduniv.edu.cu/realms/interoperabilidad"
+    operator._settings.persons_oidc_issuer_url = issuer
+    operator._settings.persons_oidc_client_id = client_id
+    operator._settings.persons_oidc_redirect_uri = "https://persona.example.invalid/admin/personas"
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        '{"operators":[{"issuer":"' + issuer + '","subject":"operator-1",'
+        '"permissions":["persons.read"],"sources":["reduniv.conecta"]}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PERSONS_AUTHORIZATION_POLICY_FILE", str(policy))
+    principal = Principal(
+        subject="operator-1",
+        username=None,
+        roles=frozenset(),
+        claims={"iss": issuer, "sub": "operator-1", "azp": client_id},
+    )
+    observed = {}
+
+    def decode(token, **kwargs):
+        observed.update(token=token, **kwargs)
+        return principal
+
+    monkeypatch.setattr(operator, "decode_access_token", decode)
+    try:
+        result = asyncio.run(operator.persons_operator_principal("synthetic-access-token"))
+        assert result.roles == frozenset({"persons.read", "persons.source.reduniv.conecta"})
+        assert observed == {
+            "token": "synthetic-access-token",
+            "issuer": issuer,
+            "audience": "mes-api",
+            "authorized_party": client_id,
+        }
+    finally:
+        _clear_signing_config()
 
 
 def test_no_token_is_denied_before_proxy():

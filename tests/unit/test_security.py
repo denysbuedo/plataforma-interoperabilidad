@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import jwt
 import pytest
@@ -78,6 +80,44 @@ def test_platform_validates_signature_issuer_audience_and_vigency(oidc_key) -> N
     for token in rejected:
         with pytest.raises(HTTPException) as caught:
             security.decode_access_token(token)
+        assert caught.value.status_code == 401
+
+
+def test_access_token_accepts_persons_issuer_only_for_configured_azp(oidc_key, monkeypatch) -> None:
+    key, _global_issuer = oidc_key
+    persons_issuer = "https://identidad.reduniv.edu.cu/realms/reduniv-institucional"
+    client_id = "interoperabilidad-admin"
+    jwks = Mock()
+    jwks.get_signing_key_from_jwt.return_value = SimpleNamespace(key=key.public_key())
+    monkeypatch.setattr(security, "_jwks_client_for_issuer", lambda issuer: jwks)
+
+    token = mint(
+        key,
+        persons_issuer,
+        azp=client_id,
+        nbf=int(datetime.now(UTC).timestamp()) - 1,
+    )
+    principal = security.decode_access_token(
+        token,
+        issuer=persons_issuer,
+        audience="mes-api",
+        authorized_party=client_id,
+    )
+    assert principal.claims["azp"] == client_id
+    jwks.get_signing_key_from_jwt.assert_called_once_with(token)
+
+    for claims in (
+        {"azp": "another-client"},
+        {"azp": None},
+    ):
+        invalid = mint(key, persons_issuer, **claims)
+        with pytest.raises(HTTPException) as caught:
+            security.decode_access_token(
+                invalid,
+                issuer=persons_issuer,
+                audience="mes-api",
+                authorized_party=client_id,
+            )
         assert caught.value.status_code == 401
 
 
