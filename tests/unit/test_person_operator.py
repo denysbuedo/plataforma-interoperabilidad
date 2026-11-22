@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from jwt.exceptions import InvalidAudienceError
+from jwt.exceptions import MissingRequiredClaimError
 from mes_common.security import Principal
 from mes_person_service import operator
 from mes_person_service.authorization import authorize_operator
@@ -124,9 +124,7 @@ def test_rejected_operator_token_logs_only_safe_failure_stage(monkeypatch, tmp_p
     monkeypatch.setattr(operator._security_logger, "warning", lambda *args: logged.append(args))
 
     def reject(_token, **_kwargs):
-        raise HTTPException(status_code=401) from InvalidAudienceError(
-            "synthetic-private-token-content"
-        )
+        raise HTTPException(status_code=401) from MissingRequiredClaimError("aud")
 
     monkeypatch.setattr(operator, "decode_access_token", reject)
     request = SimpleNamespace(state=SimpleNamespace(correlation_id="correlation-456"))
@@ -135,13 +133,13 @@ def test_rejected_operator_token_logs_only_safe_failure_stage(monkeypatch, tmp_p
 
     assert logged == [
         (
-            "persons_operator_authentication_rejected correlation_id=%s stage=%s",
+            "persons_operator_authentication_rejected correlation_id=%s stage=%s claim=%s",
             "correlation-456",
-            "audience",
+            "required_claim",
+            "aud",
         )
     ]
     assert "synthetic-access-token" not in repr(logged)
-    assert "synthetic-private-token-content" not in repr(logged)
     _clear_signing_config()
 
 

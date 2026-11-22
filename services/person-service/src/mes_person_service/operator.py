@@ -271,6 +271,7 @@ async def persons_operator_principal(
     except HTTPException as exc:
         if exc.status_code == 401:
             cause = exc.__cause__
+            claim = "not_applicable"
             if isinstance(cause, PyJWKClientError):
                 stage = "jwks_key_resolution"
             elif isinstance(cause, InvalidSignatureError):
@@ -287,12 +288,16 @@ async def persons_operator_principal(
                 stage = "issued_at"
             elif isinstance(cause, MissingRequiredClaimError):
                 stage = "required_claim"
+                claim = getattr(cause, "claim", None)
+                if claim not in {"exp", "iat", "iss", "sub", "aud"}:
+                    claim = "unknown"
             else:
                 stage = "token_validation"
             _security_logger.warning(
-                "persons_operator_authentication_rejected correlation_id=%s stage=%s",
+                "persons_operator_authentication_rejected correlation_id=%s stage=%s claim=%s",
                 request.state.correlation_id,
                 stage,
+                claim,
             )
         raise
     if principal.claims.get("azp") != client_id:
