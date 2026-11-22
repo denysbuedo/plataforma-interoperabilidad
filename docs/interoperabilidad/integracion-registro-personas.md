@@ -1,10 +1,26 @@
-# Integración local del Registro de Personas
+# Integración del Registro Institucional de Personas
 
-Estado: desarrollo local comprobable, **sin publicación institucional**. Personas es
-una capacidad de esta plataforma cuya implementación vive en el repositorio independiente
-`registro-personas`. Se reutiliza ese servicio; el `person-service` de la plataforma
-solo sirve la UI/proxy y no duplica su modelo ni consulta sus tablas. ADR-012 aprueba
-el flujo de operador PER-002, no la publicación productiva ni cambios de Keycloak.
+**Estado operativo informado (2026-11-20):** el módulo administrativo está publicado en
+`https://persona.reduniv.edu.cu/admin/personas` y el cliente público
+`interoperabilidad-admin` está configurado con Authorization Code + PKCE S256. La
+primera prueba autenticada sigue pendiente de que Identidad valide una cuenta RedUniv y
+entregue la referencia de custodia de `iss`/`sub` por el canal institucional protegido.
+El contrato OpenAPI del servicio todavía figura como `DRAFT`; la publicación del módulo
+no cambia por sí sola ese estado.
+
+Personas es una capacidad de esta plataforma cuya implementación vive en el repositorio
+independiente `registro-personas`. Se reutiliza ese servicio; el `person-service` de la
+plataforma sirve la UI/proxy y no duplica su modelo ni consulta sus tablas. ADR-012
+aprueba el flujo de operador PER-002. La configuración de producción descrita aquí se
+refiere al estado informado por los equipos, no a una verificación realizada desde este
+entorno de desarrollo.
+
+El operador inicia sesión con una cuenta existente de LDAP RedUniv en Keycloak, realm
+`reduniv-institucional`. Interoperabilidad valida el token y decide los permisos
+funcionales con una política protegida que asocia la identidad mediante `iss` y `sub`.
+Luego entrega al servicio Registro una delegación firmada, de audiencia
+`registro-personas` y corta duración. Registro no se conecta a Keycloak ni a LDAP.
+No se habilitan cuentas locales, Client Credentials ni roles funcionales en Keycloak.
 
 El correo existente sigue operativo y utilizado por varias aplicaciones, según el
 responsable. Este cambio no modifica ni prueba contra su endpoint real. El futuro
@@ -63,11 +79,11 @@ del código desde el servidor ni secreto de cliente en la aplicación. El callba
 implementado es exactamente `/admin/personas`. La ruta dedicada
 `/admin/oidc/callback` no está implementada.
 
-El hostname institucional informado es `persona.reduniv.edu.cu`, por lo que
-`https://persona.reduniv.edu.cu/admin/personas` es la callback propuesta. Despliegue
-debe confirmar que ese host/ruta sirve este módulo de Interoperabilidad antes de
-registrarla. El Web Origin requerido por las llamadas del navegador es el origen
-exacto `https://persona.reduniv.edu.cu`, sin ruta ni comodines. El botón Salir solo
+El hostname institucional es `persona.reduniv.edu.cu`; según el estado operativo
+informado, el módulo está publicado en `https://persona.reduniv.edu.cu/admin/personas`
+y esa es la callback configurada para `interoperabilidad-admin`. El Web Origin requerido
+por las llamadas del navegador es el origen exacto `https://persona.reduniv.edu.cu`, sin
+ruta ni comodines. El botón Salir solo
 borra el token en memoria y el estado local del módulo; no invoca el logout de
 Keycloak. No corresponde registrar una post-logout redirect URI para el flujo
 actual.
@@ -141,30 +157,38 @@ Bearer ficticio, verifica que los logs no reflejan el marcador de referencia y
 termina el hijo. Ignora proxies y rechaza redirecciones: no contacta IAM, SMTP, LDAP
 ni bases. No envía correo ni prueba credenciales reales.
 
-## Pendientes y reversión
+## Primera prueba autenticada y reversión
 
-El cliente de Keycloak aún no está creado ni modificado. Antes de pedirlo, Despliegue
-debe confirmar que la callback institucional llega a este módulo. La configuración
-propuesta es cliente público OIDC, Standard Flow, PKCE S256 obligatorio, sin
-Implicit Flow, Direct Access Grants, Service Accounts ni Client Credentials. El
-scope inicial es `openid`. El issuer específico de Personas se configura mediante
-`PERSONS_OIDC_ISSUER_URL`; el issuer global de los otros servicios no se cambia.
-La audiencia de operador sigue siendo `mes-api`, y el backend de Personas restringe
-además `azp` a `interoperabilidad-admin`. Los permisos (`persons.read`,
-`persons.register`, `persons.review`, `persons.link` y
-`persons.source.<alias>`) provienen de política de Interoperabilidad ligada a
-`iss`/`sub`, no de roles OIDC. La política se configura con
-`PERSONS_AUTHORIZATION_POLICY_FILE`; sin ella la plataforma deniega. La plataforma
-firma una delegación breve para la audiencia `registro-personas`; esa audiencia no
-se registra en Keycloak. La vinculación de cuentas sigue denegada hasta disponer
-de verificación institucional de titularidad.
+La primera prueba será exclusivamente de inicio de sesión y consulta, sin crear ni
+modificar datos. El orden acordado es:
 
-Rollback local: detener el proceso iniciado por el lanzador; restaurar en una revisión
-coordinada el contrato de bootstrap y el comando de desarrollo si se descarta esta
-integración. No hay datos migrados ni configuración institucional que revertir. Los
-archivos y unidades previos del correo permanecen intactos.
+1. Identidad valida una cuenta RedUniv existente y entrega la referencia de custodia
+   de `iss`/`sub` por el canal institucional protegido. No copiar `sub` ni tokens a
+   chats, tickets, documentación o repositorios.
+2. Interoperabilidad incorpora la identidad a
+   `PERSONS_AUTHORIZATION_POLICY_FILE`, con el permiso mínimo `persons.read` y solo
+   las fuentes autorizadas para la consulta. La política permanece fuera del repositorio
+   y con acceso protegido; sin una coincidencia exacta de issuer y subject se deniega
+   el acceso.
+3. El operador inicia sesión en el módulo publicado con Authorization Code + PKCE
+   S256. La plataforma valida firma/JWKS, issuer, audiencia `mes-api`, `azp`
+   `interoperabilidad-admin`, vigencia y los claims de tiempo disponibles.
+4. Se comprueban únicamente las operaciones de consulta autorizadas y la delegación
+   emitida con permisos y fuentes mínimos. No se reenvía el bearer OIDC al Registro.
+5. Para probar altas o referencias ficticias, se usa exclusivamente una base de
+   validación aislada. El API no ofrece una operación de borrado; por ello no se crean
+   datos ficticios en una base operativa.
 
-## Resultado de esta sesión (2026-11-19)
+LDAP MES queda fuera de esta prueba porque no está habilitado en el realm
+`reduniv-institucional`. No se cambian roles funcionales de Keycloak ni se habilitan
+cuentas locales, Client Credentials o permisos de escritura para esta prueba.
+
+Si la prueba debe detenerse, Interoperabilidad retira o deshabilita la entrada del
+operador en su política protegida. Identidad puede revocar la sesión según el
+procedimiento institucional. No es necesario modificar el cliente OIDC ni los datos de
+Registro para revertir una autorización de consulta.
+
+## Resultado de la comprobación local (2026-11-19)
 
 - Registro de Personas: 46 pruebas aprobadas con PostgreSQL local ficticio; migración
   y reversión cubiertas. Clúster de pruebas detenido al terminar.
@@ -175,5 +199,6 @@ archivos y unidades previos del correo permanecen intactos.
 - Ruff correcto sobre archivos Python modificados; formato comprobado en Personas.
 - SHA-256 sin diferencias en los seis archivos protegidos de correo, seguridad/app
   compartidos y unidades systemd existentes. Contratos origen/espejo idénticos.
-- Sin instalación/despliegue, publicación remota, cambios al gobierno ni conexiones
-  institucionales. Las decisiones de publicación y autenticación siguen pendientes.
+- En esa sesión no se hizo instalación/despliegue, publicación remota, cambios al
+  gobierno ni conexiones institucionales. Al cierre de esa fecha, publicación y
+  autenticación seguían pendientes; el estado operativo posterior se describe arriba.
