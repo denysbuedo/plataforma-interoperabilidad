@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from jwt.exceptions import InvalidAudienceError
 from mes_common.security import Principal
 from mes_person_service import operator
 from mes_person_service.authorization import authorize_operator
@@ -71,6 +72,7 @@ def test_admin_page_uses_explicit_local_callback(monkeypatch, tmp_path):
     assert "http://127.0.0.1:8003/admin/personas" in response.text
     assert "redirect=location.origin" not in response.text
     assert "claims.azp!==clientId" in response.text
+    assert "servidor rechazó la autenticación (401)" in response.text
     assert "claims.nbf!==undefined" in response.text
 
 
@@ -103,16 +105,44 @@ def test_persons_operator_uses_dedicated_issuer_and_client(monkeypatch, tmp_path
 
     monkeypatch.setattr(operator, "decode_access_token", decode)
     try:
-        result = asyncio.run(operator.persons_operator_principal("synthetic-access-token"))
+        request = SimpleNamespace(state=SimpleNamespace(correlation_id="correlation-123"))
+        result = asyncio.run(operator.persons_operator_principal("synthetic-access-token", request))
         assert result.roles == frozenset({"persons.read", "persons.source.reduniv.conecta"})
         assert observed == {
             "token": "synthetic-access-token",
             "issuer": issuer,
             "audience": "mes-api",
-            "authorized_party": client_id,
         }
     finally:
         _clear_signing_config()
+
+
+def test_rejected_operator_token_logs_only_safe_failure_stage(monkeypatch, tmp_path):
+    _configure_delegation(monkeypatch, tmp_path)
+    _configure_ui()
+    logged = []
+    monkeypatch.setattr(operator._security_logger, "warning", lambda *args: logged.append(args))
+
+    def reject(_token, **_kwargs):
+        raise HTTPException(status_code=401) from InvalidAudienceError(
+            "synthetic-private-token-content"
+        )
+
+    monkeypatch.setattr(operator, "decode_access_token", reject)
+    request = SimpleNamespace(state=SimpleNamespace(correlation_id="correlation-456"))
+    with pytest.raises(HTTPException):
+        asyncio.run(operator.persons_operator_principal("synthetic-access-token", request))
+
+    assert logged == [
+        (
+            "persons_operator_authentication_rejected correlation_id=%s stage=%s",
+            "correlation-456",
+            "audience",
+        )
+    ]
+    assert "synthetic-access-token" not in repr(logged)
+    assert "synthetic-private-token-content" not in repr(logged)
+    _clear_signing_config()
 
 
 def test_no_token_is_denied_before_proxy():
